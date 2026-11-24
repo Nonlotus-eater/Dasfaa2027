@@ -1,0 +1,29 @@
+{
+  "columns": [
+    "hybrid_session",
+    "dense_best",
+    "dense_best3",
+    "words_best",
+    "words_best3",
+    "context_best",
+    "context_best3",
+    "word_coverage",
+    "coverage_and_context",
+    "same_turn_dense_words",
+    "best_mixed_rank"
+  ],
+  "weights": [
+    0.817365856079664,
+    -0.9799501939275338,
+    -1.035335173049986,
+    0.37002578437455524,
+    -0.8368622196239686,
+    1.0183736450985033,
+    1.031279215276659,
+    0.528090603989684,
+    2.2826157980871797,
+    0.773830697970312,
+    0.5618407149535481
+  ],
+  "training_pairs": 33971
+}

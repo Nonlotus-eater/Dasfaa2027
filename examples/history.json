@@ -1,0 +1,26 @@
+{
+  "turns": [
+    {"id":"a1","session":"A","position":1,"text":"The north greenhouse needs a spare humidity sensor."},
+    {"id":"a2","session":"A","position":2,"text":"I ordered the humidity probe with the blue cable."},
+    {"id":"b1","session":"B","position":1,"text":"The library book club meets on Saturday morning."},
+    {"id":"c1","session":"C","position":1,"text":"The blue cable on the new humidity probe fits the greenhouse controller."},
+    {"id":"d1","session":"D","position":1,"text":"The repair bench needs a different socket for the bicycle wheel."},
+    {"id":"e1","session":"E","position":1,"text":"I reserved the library meeting room for our next book discussion."},
+    {"id":"f1","session":"F","position":1,"text":"I replaced the rear bicycle tire after checking the rim."},
+    {"id":"g1","session":"G","position":1,"text":"The bakery is testing a new sourdough recipe."},
+    {"id":"h1","session":"H","position":1,"text":"The concert hall opens the upper balcony on Friday."},
+    {"id":"i1","session":"I","position":1,"text":"The river trail closes for bridge repairs in October."},
+    {"id":"j1","session":"J","position":1,"text":"The astronomy group plans to observe Saturn at dusk."}
+  ],
+  "topics": [
+    {"sessions":["A","C"],"summary":"Greenhouse sensor replacement and installation."},
+    {"sessions":["B","E"],"summary":"Book club meetings at the library."},
+    {"sessions":["D","F"],"summary":"Bicycle wheel repairs and spare parts."}
+  ],
+  "edges":[["a1","c1"],["a2","c1"],["b1","e1"],["d1","f1"]],
+  "queries":[
+    {"id":"sensor","text":"Where did I install the blue humidity probe?"},
+    {"id":"books","text":"Where is our next book discussion?"},
+    {"id":"bike","text":"What did I replace on the rear bicycle wheel?"}
+  ]
+}
