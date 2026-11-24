@@ -57,22 +57,11 @@ At retrieval time the history ID selects visible edges from this database. Both 
 
 The five-fold path retains predefined groups across original questions, variants and shared evidence. It excludes held-out groups, groups with overlapping evidence, and abstention examples from training. The 400-question evaluation cohort includes 21 abstention variants in each LongMemEval dataset. These questions are scored on retrieval of their reference sessions. To reproduce the historical training population, add `--fold-population archive`. This fits folds over 500 questions and still reports the matched 400. The margin is fixed in all runs.
 
-## Corrected retrieval results
-
-The M numbers below and the bundled `data/M-graph.json.gz` reproduce the historical experiment. That shared graph included 1,682 verification records projected from S and 207 obtained in M. The M-only builder above has been exercised on real M histories. Its full-cohort retrieval metrics are pending.
-
-| Dataset / training | N | Success@1 | Success@5 | Success@10 | Recall@1 | Recall@5 | Recall@10 | MRR |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| LoCoMo holdout | 567 | 73.19 | 92.59 | 95.77 | 60.32 | 79.89 | 86.42 | 81.25 |
-| LongMemEval-S / transfer | 400 | 89.50 | 97.50 | 98.50 | 33.75 | 89.50 | 94.75 | 92.93 |
-| LongMemEval-S / five folds | 400 | 90.00 | 98.00 | 98.25 | 34.25 | 89.25 | 94.75 | 93.30 |
-| LongMemEval-M / transfer | 400 | 73.75 | 90.75 | 94.25 | 26.00 | 75.75 | 84.75 | 81.38 |
-| LongMemEval-M / five folds | 400 | 74.25 | 91.00 | 94.25 | 26.50 | 75.00 | 83.75 | 81.91 |
-
 ## Benchmark files
 
 - `data/*.npz` stores numeric 11-column normalized session features in Stage 1 rank order, evidence masks and historical session-level nominations. The JSON manifests identify public question IDs, candidate spans, total gold counts, folds, group conflicts, and the primary evaluation cohort. Session indices are local to each question.
 - `data/*-graph.json.gz` stores aligned, linked turns as triples of initial session index, full-history dense rank, and positive BM25 rank (zero for a non-match). Edges index these triples. Isolated turns are omitted after computing full-history ranks. Queries without a reachable seed edge may have an empty graph. These inputs support the fixed Stage 1 ranking used by this benchmark.
+- `data/M-graph.json.gz` comes from the historical shared graph, which combines verification records obtained in M with records projected from S.
 - `evaluate.py` recomputes turn-level nominations, refits models, applies bounded swaps and aggregates held-out rankings. It also evaluates the earlier session-level nominations using identical scores for a paired comparison. Previous evidence ranks are used only to check the historical transfer control.
 - The full-cohort evaluation starts from stored Stage 1 inputs. `retrieve.py` separately exposes live scoring, feature extraction and both ranking stages for prepared text. Benchmark source conversations and model weights for external encoders are distributed by their maintainers. [LoCoMo](https://github.com/snap-research/locomo) · [LongMemEval](https://github.com/xiaowu0162/LongMemEval)
 
