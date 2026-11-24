@@ -1,153 +1,166 @@
-# PAMR: Hybrid Evidence Scoring for Source-Session Retrieval in Agent Memory
+# Source-Session Retrieval for Agent Memory
 
-Research artifact for the DASFAA 2027 submission *Provenance-Aligned Multi-Resolution Session Retrieval for Compressed Agent Memory*.
+Official artifact for our DASFAA 2027 submission.
 
-**PAMR** ranks past conversation sessions by how well they support a user's query. It uses a fixed dense encoder and a small, trained linear comparator. An LLM verifies links between turns offline. Both online retrieval stages run on CPU without calling an LLM.
+Our work introduces a lightweight, two-stage retrieval method for long-term conversational agent memory. Given a user query, it ranks the **source conversation sessions** that contain supporting evidence—decoupling offline memory indexing and cross-session graph construction from fast online retrieval with no LLM calls at query time.
 
-## Why PAMR?
+---
 
-Suppose a user asks, “Which hotel did I end up booking?” A planning session might mention three hotels. A later session might contain the booking confirmation in a single turn. Both sessions match the topic, but the confirmation identifies which hotel the user booked.
+## Why This Work?
 
-- **Whole-session encoding** compresses a conversation into one vector. A short confirmation can have little influence on that vector.
-- **Topic-summary retrieval** can identify the trip while giving the same topic score to several sessions. The summary alone cannot tell the reader where the confirmation occurred.
-- **Online LLM reranking** can inspect the candidate conversations, but adds inference time and cost to each query.
+When an agent interacts with a user across dozens or hundreds of sessions, multiple sessions often touch on the same broad topic (e.g., discussing travel plans in one session and confirming a hotel booking in another). Existing retrieval strategies face two common limitations:
 
-PAMR keeps each turn tied to its source session. The initial ranking uses both the turn and its topic context. A verified link can then bring a related session into the reranking pool, where the comparator scores its own evidence.
+- **Whole-session encoding** compresses an entire conversation into a single vector, allowing surrounding small talk to dilute fine-grained evidence turns.
+- **Cross-session topic summaries** merge related turns from different sessions into shared topics, spreading topic scores across all contributing sessions and obscuring which specific session holds the direct answer.
+
+**Our method addresses these limitations in two lightweight online stages over precomputed offline structures:**
+
+1. **Offline Preparation**: Keeps retained user turns, topic summaries, and lexical (BM25) statistics aligned to their source sessions, alongside a verified cross-session turn association graph (topic formation, turn compression, and LLM verification are upstream offline inputs).
+2. **Online Stage 1 (Hybrid Initial Retrieval)**: Combines turn-level semantic matching, topic-summary context, and session-level BM25 to produce an initial session ranking.
+3. **Online Stage 2 (Graph-Proposed Reranking)**: Follows 1-hop links in the offline turn graph from top-ranked sessions to nominate cross-session candidates, scores sessions with a pairwise-trained linear comparator, and applies thresholded swaps across consecutive rank segments under a fixed per-segment candidate budget.
 
 ```text
-Offline    Source conversations
-           ├─ Retained user turns and local windows, grouped by source session
-           ├─ Topic summaries mapped to their contributing sessions
-           ├─ Session and turn BM25 indexes
-           └─ LLM-verified links between turns in different sessions
+[Offline Preparation (Upstream Inputs)]
+  Retained User Turns + Topic Summaries + Session/Turn BM25 Indexes + Verified Cross-Session Turn Graph
 
-Online     Query + prepared index
-             ↓
-           Stage 1   Turn similarity + topic context + session BM25
-             ↓       Initial ranking of source sessions
-           Stage 2   One-hop graph nominations + 11-feature linear comparator
-             ↓       Bounded swaps at ranks 1, 2–5, 6–10 and 11–20
-           Final ranking of source sessions
+[Online Retrieval (Zero LLM Calls)]
+  Query q ──► Stage 1: Hybrid Initial Retrieval (Turn Smooth-Max + Topic Context + Session BM25)
+                │
+                ▼ Initial Ranking
+              Stage 2: 1-Hop Turn-Graph Nomination + 11-Feature Linear Comparator
+                │
+                ▼ Bounded Pool (up to 6 Direct + 2 Graph-Priority per Segment) & Thresholded Swaps (1 / 2–5 / 6–10 / 11–20)
+              Final Ranked Source Sessions
 ```
+
+---
 
 ## Quick Start
 
-Run these commands from the repository root with Python 3.11. The example retrieves from prepared text using cached MiniLM vectors. The benchmark starts from the bundled Stage 1 features and turn graphs, refits the comparator, and evaluates session rankings on LoCoMo, LongMemEval-S, and LongMemEval-M.
+This repository provides a self-contained retrieval example with prepared memory and cached vectors, a trainable pairwise comparator, and precomputed inputs for re-evaluating **567 held-out LoCoMo questions** and **400 questions each in LongMemEval-S and LongMemEval-M**. All experiments use Python 3.11 with seed 0. We measure latency on a single **NVIDIA RTX 3080 (10 GB)** with batch size 1.
 
 ```sh
+# 1. Create environment and install dependencies
 python3.11 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements.txt
 
+# 2. Run the end-to-end retrieval example (uses cached MiniLM vectors)
 python retrieve.py
+
+# 3. Reproduce benchmark evaluation on LoCoMo, LongMemEval-S, and LongMemEval-M
 python evaluate.py --model both --output outputs
+
+# 4. Run unit tests
 python -m unittest discover -s tests -v
 ```
 
-`outputs/per-query.csv` records the ranks of the first and last labeled evidence sessions for each query. `outputs/metrics.json` records fold sizes, training-pair counts, comparator weights, and the following metrics, expressed as percentages.
+`evaluate.py` writes per-query first and last evidence ranks and a JSON summary with fold sizes, training-pair counts, fitted weights, and retrieval metrics (all reported as percentages):
 
-- **Success@k** counts queries with at least one labeled evidence session in the top *k*.
-- **Recall@k** counts queries with all labeled evidence sessions in the top *k*. A missing candidate still counts as missing evidence.
-- **MRR** averages the reciprocal rank of the first labeled evidence session. Queries with no retrieved evidence contribute zero.
+* **Success@k**: At least one labeled evidence session appears in the top $k$.
+* **Recall@k**: Every labeled evidence session appears in the top $k$ (including labels absent from the candidate set).
+* **MRR**: Mean reciprocal rank of the first labeled evidence session.
 
-Success and Recall are evaluated at *k* = 1, 5, and 10.
+---
 
-## How PAMR Works
+## Method Overview
 
-### Offline indexing
+### 1. Memory Inputs & Stage 1 (Hybrid Initial Retrieval)
 
-Each retained user turn carries a source session ID and a position within that session. Local windows contain the center turn and its immediate neighbors in the same session. Each topic summary lists the sessions that contributed to it. Two BM25 indexes support lexical matching, one over concatenated turns per session and one over individual turns.
+The retriever takes retained user turns (with source session ID and chronological position), topic summaries with their contributing sessions, and verified undirected links between turns. It builds both session-level and turn-level BM25 indexes.
 
-The offline verifier links turns from different sessions when their text supports the same matter or related activities of the same participant. At query time, the retriever can follow each verified link in either direction.
+At query time, Stage 1 scores each session by combining:
 
-### Stage 1 · Hybrid initial retrieval
+* **Turn-level semantic score**: Pooled across turns in the session using normalized smooth-max (temperature $\tau = 0.05$).
+* **Topic-summary score**: Mixed with weight $0.10$.
+* **Session-level BM25 score**: Mixed with weight $0.25$.
 
-PAMR combines three scores for each session with indexed user turns.
+### 2. Stage 2 (Graph-Proposed Reranking)
 
-| Signal | Computation | Default |
-| --- | --- | --- |
-| Turn similarity | Pool query–turn cosine similarities within the session using normalized smooth-max. | Temperature τ = 0.05 |
-| Topic context | Take the highest query similarity among summaries mapped to the session. A session with no mapped summary uses its turn score. | Topic weight β = 0.10 within the semantic score |
-| Session BM25 | Score the concatenated user turns and normalize by the highest session BM25 score for this query. | Lexical weight α = 0.25 |
+Starting from the Stage 1 ranking, Stage 2 refines session order in three steps:
 
-The initial score is `(1 − α) × ((1 − β) × turn + β × topic) + α × BM25`.
+1. **Turn-level Weighted RRF**: Fuses dense turn ranks and positive turn-level BM25 ranks using weighted reciprocal rank fusion (offset $60$, lexical weight $0.5$).
+2. **1-Hop Turn-Graph Nomination**: Each of the top $20$ sessions contributes up to $2$ linked anchor turns, and each anchor contributes up to $3$ best-ranked neighbor turns to nominate candidate sessions.
+3. **Linear Comparator & Consecutive Segment Swapping**: Extracts 11 normalized session features (including Stage 1 score, turn semantic/BM25 matches, and local-window similarity covering the center turn and its immediate neighbors within the session) and scores sessions with a pairwise-trained linear comparator. For each rank segment ending at `1`, `5`, `10`, and `20`, a fixed-budget candidate pool admits up to **6 direct-rank candidates and 2 graph-priority candidates** (remaining slots follow the initial ranking). A swap requires a score margin of at least $\ln(1.5)$ and retires both participants for the query.
 
-### Stage 2 · Graph-proposed reranking
-
-1. **Rank turns.** Weighted reciprocal rank fusion (RRF) combines dense turn ranks with ranks from positive BM25 matches. The rank offset is 60 and the lexical weight is 0.5.
-2. **Nominate sessions.** Each of the top 20 initial sessions supplies up to two linked anchor turns in RRF order. Each anchor nominates the sessions of its three highest-ranked one-hop neighbors, or all its neighbors if it has fewer than three.
-3. **Score the evidence.** A linear comparator trained by pairwise logistic regression scores each session. Its 11 normalized features cover the initial score, turn and local-window matches, keyword coverage, feature interactions, and the best fused turn rank.
-4. **Apply bounded swaps.** Visit rank segments 1, 2–5, 6–10, and 11–20 in order. From below each segment, take up to six eligible sessions in rank order, then up to two additional graph-nominated sessions. Fill any remaining slots in the eight-session pool by rank. The best challenger swaps with the weakest eligible session in the segment if their comparator scores differ by at least `ln(1.5)` in the challenger's favor. Each segment allows one swap and both participants retire from further swaps.
+---
 
 ## Running on Custom Text
 
-Use [examples/history.json](examples/history.json) as the input format for retained turns, topic summaries and their source sessions, verified turn links, and queries. The example supplies its own summaries and links. For a new history, prepare the compressed turns, summaries, and verified links upstream.
+The bundled `retrieve.py` demo uses cached vectors for three example queries. To run on your own text:
 
-The bundled demo uses cached vectors for three queries. To encode your own text, install the encoder dependencies, substitute your JSON path for `examples/history.json`, and point `--model` to a local copy of [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2).
+1. Prepare a JSON file following `examples/history.json` (topic formation, turn compression, and LLM judgments are upstream inputs).
+2. Install the encoder dependency and point `--model` to a local copy of [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2):
 
 ```sh
 python -m pip install -r requirements-encoder.txt
 python retrieve.py --history examples/history.json --model /path/to/all-MiniLM-L6-v2
 ```
 
-To reuse the embeddings, save them on the first run and pass the cache on subsequent runs. The retriever checks a digest of the ordered input texts before using the cache.
+Optionally cache encoded vectors with `--save-vectors` and reuse them with `--vectors` (the cache validates a digest of the ordered input texts):
 
 ```sh
 python retrieve.py --history examples/history.json --model /path/to/all-MiniLM-L6-v2 --save-vectors history.npz
 python retrieve.py --history examples/history.json --vectors history.npz
 ```
 
+---
+
 ## Evaluation Protocols
 
-| Option | Comparator training | Evaluation queries |
+`evaluate.py` supports the following protocols via `--model`:
+
+| Option | Training Population | Reported Queries |
 | --- | --- | --- |
-| `--model transfer` | Fit on the six-conversation LoCoMo development split (969 queries). Apply the same weights to S and M. | Four held-out LoCoMo conversations (567 queries) and the matched 400 queries in each LongMemEval variant. |
-| `--model fivefold` | Use the same LoCoMo split. Within S and M, train five comparators separately per dataset, each on the eligible queries from the other folds. | The LoCoMo holdout and one held-out prediction per query in each 400-query LongMemEval cohort. |
-| `--model both` | Run both protocols and fit the common LoCoMo model once. | Report the LoCoMo holdout once and each LongMemEval protocol separately. |
+| `--model transfer` | Refit the comparator on 969 questions from 6 LoCoMo conversations | 4 disjoint LoCoMo conversations (567 questions) and 400 each in LongMemEval-S and LongMemEval-M |
+| `--model fivefold` | Same LoCoMo holdout; for S and M, fit 5 models **separately per dataset** using the other folds of the 400-question cohort | One held-out prediction per question |
+| `--model both` | Run both protocols (fitting the shared LoCoMo model once) | Separate metrics for each protocol |
 
-Five-fold training excludes held-out groups, groups with overlapping evidence, and abstention examples. Groups account for original questions and their variants. The matched evaluation cohort includes 21 abstention variants in each LongMemEval dataset, scored on retrieval of their reference sessions.
+**Protocol notes:**
 
-To use the historical fold population of 500 questions per LongMemEval dataset, pass `--fold-population archive`. Evaluation still uses the matched 400 per dataset. The swap margin stays fixed across protocols.
+* The five-fold path preserves predefined groups across original questions, variants, and shared evidence, excluding held-out groups, overlapping-evidence groups, and abstention examples from training.
+* Each 400-question LongMemEval cohort includes 21 abstention variants, scored on retrieval of their reference sessions.
+* To reproduce the historical 500-question training population (while still reporting on the matched 400 questions), add `--fold-population archive`. The swap margin $\ln(1.5)$ is fixed in all runs.
 
-## Building the Shared Graph for LongMemEval-M
+---
 
-`build_m_graph.py` pools source conversations from the 500 M histories into one SQLite graph. It accepts the official JSON array or a directory with one `HISTORY_ID.json` file per history. Histories share a session record when both its ID and content match. The builder uses session IDs, dates, roles, and conversation text. Question IDs identify histories for visibility checks. Question text, answers, and evidence labels are excluded from indexing.
+## Shared Graph Builder for LongMemEval-M
+
+`build_m_graph.py` pools source conversations from all 500 LongMemEval-M histories into one SQLite database (supporting both the public JSON array and a directory of individual histories). Records with the same source session ID and identical content share a session; question text, answers, and evidence labels are excluded.
 
 ```sh
-# Propose pairs from M source histories in a new database.
+# 1. Propose cross-session candidate pairs sharing rare terms in chronological witness histories
 python build_m_graph.py propose longmemeval_m_cleaned.json outputs/m.sqlite3
 
-# Import positive M judgments from the upstream verifier.
+# 2. Import upstream verified positive judgments (idempotent; validates membership and exact quotes)
 python build_m_graph.py apply outputs/m.sqlite3 verified_m_judgments.jsonl
 
-# Inspect a seed session's neighbors in one history.
+# 3. Inspect neighbors for a given history and seed session
 python build_m_graph.py neighbors outputs/m.sqlite3 HISTORY_ID SEED_SESSION
 
-# Use the visible edges when retrieving from a prepared M history.
+# 4. Run live retrieval with the projected per-history adjacency list
 python retrieve.py --history prepared_m_history.json --model /path/to/all-MiniLM-L6-v2 \
   --m-graph outputs/m.sqlite3 --m-history HISTORY_ID
 ```
 
-- **Candidate selection.** The builder shortlists turns from different sessions whose personal statements share rare terms. Both sessions must occur in chronological order in at least one witness history. The `candidates` table stores a key bound to the source turns, their endpoint IDs, the witness history, and the lexical score.
-- **Upstream verification.** The research pipeline filters candidate pairs using Qwen `text-embedding-v4` at cosine similarity ≥ 0.40. Among the highest-scoring 256 pairs, `gpt-4o-mini-2024-07-18` judges those with eligible evidence spans. The public `apply` command takes the resulting positive judgments as a JSONL input.
-- **Judgment format.** Each row supplies `candidate`, `origin` (`M-shared`), `model` (`gpt-4o-mini-2024-07-18`), `request_id`, `cosine`, `relation` (`same_matter` or `activity_history`), and `old` and `new` spans. Each span is `[start_offset, exclusive_end_offset, exact_quote]` in the original turn. The importer checks the candidate and both quotes. Re-importing an identical judgment keeps one edge.
-- **Query-time visibility.** An edge is visible when both endpoints occur in the selected history in the verified order. Prepared turns match by source session ID and original text. An optional zero-based `source_position` distinguishes repeated turns. All queries in the prepared history share one projected adjacency list.
+* **Research run**: The `candidates` table stores the source-bound candidate key, endpoint turn IDs, witness history, and lexical score. In our research run, `Qwen text-embedding-v4` filters the shortlist at cosine $\ge 0.40$, and `gpt-4o-mini-2024-07-18` judges eligible span options among the highest-scoring 256 pairs.
+* **JSONL format for `apply`**: Each row contains `candidate`, `origin` (`M-shared`), `model` (`gpt-4o-mini-2024-07-18`), `request_id`, `cosine`, `relation` (`same_matter` or `activity_history`), and `old`/`new` evidence spans formatted as `[start_offset, exclusive_end_offset, exact_quote]`. Re-importing the same judgment is safe.
+* **Query-time projection**: Given `HISTORY_ID`, the retriever selects only edges whose endpoints are both present in chronological order. Prepared turns match via source session ID and original text (with an optional zero-based `source_position` for repeated turns within a session), and the projected adjacency list is built once per history.
+
+---
 
 ## Repository & Benchmark Files
 
-| File | Contents |
-| --- | --- |
-| [retrieve.py](retrieve.py) | Builds an index from prepared text and runs both retrieval stages for each query. |
-| [evaluate.py](evaluate.py) | Refits comparators on stored Stage 1 inputs, recomputes turn-level nominations, applies bounded swaps, and aggregates metrics. It also scores the earlier session-level nominations for a paired comparison and checks historical transfer ranks. |
-| [build_m_graph.py](build_m_graph.py) | Proposes M candidates, imports verified judgments, and projects visible neighbors for a given history. |
-| [method/](method/) | Implements scoring, graph operations, candidate nomination, training, and reranking. |
-| `data/*.npz` | Stores 11-column session features in Stage 1 rank order, evidence masks, and historical session-level nominations. |
-| `data/LoCoMo.json`, `data/S.json`, `data/M.json` | Map public question IDs to candidate rows, gold counts, folds, group conflicts, and evaluation cohorts. Session indices are local to each query. |
-| `data/*-graph.json.gz` | Stores linked turns as `(initial_session_index, full_history_dense_rank, positive_bm25_rank)` triples, with zero for a missing BM25 match. Edges refer to those triples. Isolated turns are omitted after computing ranks and queries with no reachable seed edge may have an empty graph. |
-| [data/comparator.json](data/comparator.json) | Contains the ordered feature names and fitted LoCoMo weights used by the retrieval example. |
+* `retrieve.py` — Live scoring, feature extraction, and both ranking stages for prepared text.
+* `evaluate.py` — Recomputes turn-level nominations from stored Stage 1 inputs, refits models, applies bounded swaps, and aggregates held-out rankings (also evaluates earlier session-level nominations using identical scores for a paired comparison).
+* `build_m_graph.py` — SQLite-backed shared graph builder and importer for LongMemEval-M.
+* `data/*.npz` & `data/*.json` — 11-column normalized session features in Stage 1 rank order, evidence masks, historical session-level nominations, and manifests (public question IDs, candidate spans, total gold counts, folds, group conflicts, and primary evaluation cohort).
+* `data/*-graph.json.gz` — Aligned, linked turns stored as `(initial_session_index, full_history_dense_rank, positive_bm25_rank)` triples (zero for a non-match; isolated turns omitted after computing full-history ranks; `data/M-graph.json.gz` combines verification records obtained in M with records projected from S).
 
-The bundled `data/M-graph.json.gz` comes from the historical shared graph, which combines judgments obtained in M with records projected from S. The shared-graph commands above build from M sources alone. Original conversations and encoder weights are available from their maintainers. [LoCoMo](https://github.com/snap-research/locomo) · [LongMemEval](https://github.com/xiaowu0162/LongMemEval) · [MiniLM model card](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)
+Benchmark source conversations and external encoder weights are distributed by their maintainers: [LoCoMo](https://github.com/snap-research/locomo) · [LongMemEval](https://github.com/xiaowu0162/LongMemEval) · [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2).
+
+---
 
 ## Acknowledgments & License
 
-The BM25 and pooling primitives are adapted from LightMem. Its MIT notice is included in [LICENSE](LICENSE).
+The BM25 and pooling primitives are adapted from LightMem. Its MIT notice is included in `LICENSE`.
