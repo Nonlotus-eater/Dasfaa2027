@@ -8,8 +8,8 @@ import unittest
 from unittest.mock import patch
 
 from build_m_graph import apply_decisions, build
-from pamr.m_graph import neighbors, propose, retrieval_edges
-from pamr.ranking import adjacency
+from method.m_graph import neighbors, propose, retrieval_edges
+from method.ranking import adjacency
 from retrieve import EXAMPLE, run
 
 
@@ -75,7 +75,7 @@ class SharedGraphTests(unittest.TestCase):
             reference = folder / "example.json"
             reference.write_text(json.dumps(example))
             expected = run(reference, vector_path=EXAMPLE.with_suffix(".npz"))
-            with patch("pamr.retrieval.adjacency", wraps=adjacency) as create:
+            with patch("method.retrieval.adjacency", wraps=adjacency) as create:
                 actual = run(EXAMPLE, m_graph=graph, m_history="visible")
             self.assertEqual(actual, expected)
             self.assertGreater(len(actual), 1)

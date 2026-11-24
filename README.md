@@ -1,6 +1,6 @@
-# PAMR session retrieval
+# Session retrieval method
 
-PAMR ranks the source sessions that contain evidence for a conversational query. This artifact provides a retrieval example with prepared memory, a trainable pairwise comparator, and the inputs for re-evaluating 567 held-out LoCoMo questions and the same 400 questions in each LongMemEval variant.
+The method ranks the source sessions that contain evidence for a conversational query. This artifact provides a retrieval example with prepared memory, a trainable pairwise comparator, and the inputs for re-evaluating 567 held-out LoCoMo questions and the same 400 questions in each LongMemEval variant.
 
 ## Run locally
 

@@ -8,8 +8,8 @@ import sqlite3
 
 import numpy as np
 
-from pamr.retrieval import Index, embedding_texts
-from pamr.m_graph import retrieval_edges
+from method.retrieval import Index, embedding_texts
+from method.m_graph import retrieval_edges
 
 HERE = Path(__file__).resolve().parent
 EXAMPLE = HERE / "examples" / "history.json"

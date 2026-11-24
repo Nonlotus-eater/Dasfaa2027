@@ -1,4 +1,4 @@
-"""Train and evaluate PAMR on the matched LoCoMo and LongMemEval paper cohorts."""
+"""Train and evaluate the retrieval method on the matched LoCoMo and LongMemEval paper cohorts."""
 import argparse
 from collections import defaultdict
 import csv
@@ -10,8 +10,8 @@ from tempfile import NamedTemporaryFile
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from pamr.ranking import nominate, rerank
-from pamr.training import FEATURES, fit, training_fold
+from method.ranking import nominate, rerank
+from method.training import FEATURES, fit, training_fold
 
 DATA = Path(__file__).resolve().parent / "data"
 METRICS = ("Success@1", "Success@5", "Success@10", "Recall@1", "Recall@5", "Recall@10", "MRR")

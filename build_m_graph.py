@@ -9,7 +9,7 @@ from pathlib import Path
 import sqlite3
 from tempfile import NamedTemporaryFile
 
-from pamr.m_graph import add_edge, index_histories, meta, neighbors, pack, propose, require_m_only
+from method.m_graph import add_edge, index_histories, meta, neighbors, pack, propose, require_m_only
 
 
 def array_items(path):

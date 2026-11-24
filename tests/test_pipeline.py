@@ -5,8 +5,8 @@ from collections import Counter
 import numpy as np
 
 from evaluate import percentages
-from pamr.ranking import mixed_order, nominate, rerank, turn_ranks
-from pamr.training import training_fold
+from method.ranking import mixed_order, nominate, rerank, turn_ranks
+from method.training import training_fold
 from retrieve import EXAMPLE, run
 
 
